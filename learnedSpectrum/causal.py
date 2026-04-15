@@ -45,47 +45,33 @@ class CausalGraph:
 class CausalEstimator(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
-        # Dimension reduction for memory efficiency
         self.dim_reduce = nn.Sequential(
-            nn.Linear(16, hidden_dim),  # Match input dimension
+            nn.Linear(16, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.1)
         )
-        
-        # Feature extraction
+
         self.feature_net = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
             nn.Dropout(0.1)
         )
-        
-        # Treatment effect estimation
+
         self.treatment_net = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(hidden_dim, 16)  # Match output dimension
+            nn.Linear(hidden_dim, 16)
         )
-        
+
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        # Debug prints
-        print(f"Input shape: {x.shape}")
-        
-        # Reshape if needed
         if len(x.shape) > 3:
             B, T, H, W = x.shape[:-1]
             x = x.reshape(-1, x.shape[-1])
-            print(f"Reshaped input: {x.shape}")
-        
+
         x = self.dim_reduce(x)
-        print(f"After dim reduce: {x.shape}")
-        
         features = self.feature_net(x)
-        print(f"After feature net: {features.shape}")
-        
         treatment_effects = self.treatment_net(features)
-        print(f"Treatment effects: {treatment_effects.shape}")
-        
-        # Return treatment effects and features
+
         return treatment_effects, features
 
 
@@ -96,28 +82,30 @@ class TemporalCausalConv(nn.Module):
                             padding=(kernel_size - 1))
         self.norm = nn.BatchNorm1d(out_channels)
         self.activation = nn.GELU()
+        # Zero out the right half of the kernel so each output at time t only
+        # depends on inputs at times <= t — this is what makes it "causal".
         self.register_buffer('mask', self._get_causal_mask(kernel_size))
-        
+
     def _get_causal_mask(self, kernel_size: int) -> torch.Tensor:
         mask = torch.ones(kernel_size)
         mask[kernel_size//2 + 1:] = 0
-        return mask.view(1, 1, -1)  
-        
+        return mask.view(1, 1, -1)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         B, C, H, W, T = x.shape
-        
-        x = x.permute(0, 1, 4, 2, 3)  
-        x = x.reshape(B * C, T, H * W)  
-        x = x.permute(0, 2, 1)  
-        
+
+        x = x.permute(0, 1, 4, 2, 3)
+        x = x.reshape(B * C, T, H * W)
+        x = x.permute(0, 2, 1)
+
         x = self.conv(x) * self.mask
         x = self.norm(x)
         x = self.activation(x)
-        
-        x = x.permute(0, 2, 1)  
-        x = x.reshape(B, C, T, H, W)  
-        x = x.permute(0, 1, 3, 4, 2)  
-        
+
+        x = x.permute(0, 2, 1)
+        x = x.reshape(B, C, T, H, W)
+        x = x.permute(0, 1, 3, 4, 2)
+
         return x
 
 
@@ -146,12 +134,10 @@ class CausalAnalysisModule(nn.Module):
             batch_first=True
         )
         
-    def compute_causal_strength(self, x: torch.Tensor, 
+    def compute_causal_strength(self, x: torch.Tensor,
                               temporal_mask: Optional[torch.Tensor] = None):
-        # Encode temporal sequence
         temporal_features, _ = self.temporal_encoder(x)
-        
-        # Apply temporal attention for causal discovery
+
         if temporal_mask is not None:
             attended_features, _ = self.temporal_attention(
                 temporal_features, temporal_features, temporal_features,
@@ -161,8 +147,7 @@ class CausalAnalysisModule(nn.Module):
             attended_features, _ = self.temporal_attention(
                 temporal_features, temporal_features, temporal_features
             )
-            
-        # Estimate causal strengths
+
         causal_strengths = self.causal_estimator(attended_features)
-        
+
         return causal_strengths, attended_features
