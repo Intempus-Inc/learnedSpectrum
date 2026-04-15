@@ -94,15 +94,11 @@ def save_checkpoint(model: nn.Module,
 
 
 def load_checkpoint(model, optimizer, checkpoint_path, weights_only=True):
-    try:
-        ckpt = torch.load(checkpoint_path, weights_only=weights_only)
-        model.load_state_dict(ckpt['model_state_dict'])
-        if optimizer and 'optimizer_state_dict' in ckpt:
-            optimizer.load_state_dict(ckpt['optimizer_state_dict'])
-        return model, optimizer, ckpt
-    except Exception as e:
-        logging.warning(f"ckpt fail: {e}, continuing w/ fresh model")
-        return model, optimizer, {}
+    ckpt = torch.load(checkpoint_path, weights_only=weights_only)
+    model.load_state_dict(ckpt['model_state_dict'])
+    if optimizer and 'optimizer_state_dict' in ckpt:
+        optimizer.load_state_dict(ckpt['optimizer_state_dict'])
+    return model, optimizer, ckpt
     
     
 def get_cosine_schedule_with_warmup(optimizer: torch.optim.Optimizer,
@@ -196,7 +192,6 @@ def checkpoint_wrapper(function, *args, **kwargs):
 
 def enable_memory_efficient_attention():
     """Enable memory efficient attention settings"""
-    if hasattr(torch.nn.functional, 'scaled_dot_product_attention'):
-        torch.backends.cuda.enable_flash_sdp(True)
-        torch.backends.cuda.enable_mem_efficient_sdp(True)
-        torch.backends.cuda.enable_math_sdp(True)
+    torch.backends.cuda.enable_flash_sdp(True)
+    torch.backends.cuda.enable_mem_efficient_sdp(True)
+    torch.backends.cuda.enable_math_sdp(True)
