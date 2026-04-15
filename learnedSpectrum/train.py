@@ -103,11 +103,10 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, scaler, config):
         except RuntimeError as e:
             if "out of memory" in str(e):
                 print("WARNING: out of memory")
-                if hasattr(torch.cuda, 'empty_cache'):
-                    torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
                 continue
             else:
-                raise e
+                raise
     
     return total_loss / len(train_loader)
 
@@ -120,22 +119,17 @@ def evaluate(model, loader, config):
     
     with torch.no_grad():
         for batch_idx, (inputs, labels) in enumerate(loader):
-            try:
-                inputs = inputs.to(config.device, dtype=config.AMP_DTYPE)
-                labels = labels.to(config.device, dtype=torch.long)
-                
-                with torch.amp.autocast('cuda'):
-                    outputs, _ = model(inputs)  # Unpack tuple
-                    loss = F.cross_entropy(outputs, labels)
-                    
-                total_loss += loss.item()
-                preds = outputs.argmax(dim=1)
-                all_preds.extend(preds.cpu().numpy())
-                all_labels.extend(labels.cpu().numpy())
-                
-            except Exception as e:
-                logger.error(f"Error in validation batch {batch_idx}: {str(e)}")
-                continue
+            inputs = inputs.to(config.device, dtype=config.AMP_DTYPE)
+            labels = labels.to(config.device, dtype=torch.long)
+
+            with torch.amp.autocast('cuda'):
+                outputs, _ = model(inputs)  # Unpack tuple
+                loss = F.cross_entropy(outputs, labels)
+
+            total_loss += loss.item()
+            preds = outputs.argmax(dim=1)
+            all_preds.extend(preds.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
 
     # Calculate metrics
     metrics = calculate_validation_metrics(

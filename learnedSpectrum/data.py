@@ -184,13 +184,6 @@ class FMRIAugmentor:
         return x
     
 
-def sanitized_collate(batch):
-    valid_batch = [(x, y) for x, y in batch if x is not None]
-    if not valid_batch:
-        raise RuntimeError("entire batch corrupt")
-    return torch.utils.data.dataloader.default_collate(valid_batch)
-
-
 class BIDSManager:
     def __init__(self, data_config):
         self.config = data_config
@@ -415,17 +408,12 @@ class NiftiLoader:
     def _wavelet_transform(self, data: np.ndarray) -> np.ndarray:
         if not self.config.USE_WAVELET:
             return data
-            
+
         padded = np.pad(data, ((0,0), (0,0), (0,2), (0,0)), mode='symmetric')
-        
-        try:
-            coeffs = pywt.wavedec(padded, wavelet='haar', level=2, axis=-2)
-            scaled_coeffs = [zoom(c, (1, 1, coeffs[0].shape[2]/c.shape[2], 1), order=1)
-                           for c in coeffs]
-            return np.concatenate(scaled_coeffs, axis=-1)
-        except Exception as e:
-            logger.warning(f"wavelet fail: {e}, using raw")
-            return data
+        coeffs = pywt.wavedec(padded, wavelet='haar', level=2, axis=-2)
+        scaled_coeffs = [zoom(c, (1, 1, coeffs[0].shape[2]/c.shape[2], 1), order=1)
+                         for c in coeffs]
+        return np.concatenate(scaled_coeffs, axis=-1)
 
     @lru_cache(maxsize=256)
     def load_and_preprocess(self, filepath: Path) -> Optional[torch.Tensor]:
@@ -658,15 +646,12 @@ class DatasetManager:
                 if stage in self.label_mapping:
                     return self.label_mapping[stage].value - 1  
 
-        try:
-            metadata = self._extract_metadata(path)
-            if metadata and metadata.process:
-                return metadata.process.value - 1
-            if metadata and metadata.phase:
-                return metadata.phase.value - 1 + len(CognitiveProcess)  
-        except Exception as e:
-            logger.warning(f"Metadata extraction failed for {path}: {e}")
-            
+        metadata = self._extract_metadata(path)
+        if metadata and metadata.process:
+            return metadata.process.value - 1
+        if metadata and metadata.phase:
+            return metadata.phase.value - 1 + len(CognitiveProcess)
+
         logger.warning(f"Could not determine learning stage for {path}")
         return None
         
@@ -772,93 +757,25 @@ class DatasetManager:
         logger.warning(f"Could not determine learning stage for {path}")
         return None
     
-    def load_dataset(self, dataset_name: str):
-        dataset_info = self.data_config.DATASET_URLS[dataset_name]
-        cache_path = self.cache_dir / dataset_name
-        
-        if not cache_path.exists():
-            cache_path.mkdir(parents=True)
-
-        raw_path = cache_path / "raw"
-        if not raw_path.exists():
-            print(f"Downloading {dataset_name}...")
-            download_url(dataset_info['url'], raw_path)
-
-        processed_path = cache_path / "processed"
-        if not processed_path.exists():
-            print(f"Processing {dataset_name}...")
-            processed_path.mkdir(parents=True)
-
-            raw_data = load_raw_data(raw_path)
-
-            processed_data = preprocess_fmri(
-                raw_data,
-                tr=dataset_info['tr'],
-                target_shape=self.data_config.TARGET_SHAPE,
-                normalize=self.data_config.NORMALIZE,
-                use_wavelet=self.data_config.USE_WAVELET
-            )
-
-            save_processed_data(processed_data, processed_path)
-
-        self.data_paths.extend(list(processed_path.glob("*.npy")))
-
-    def process_dataset(self, dataset_name: str, raw_path: Path, tr: float):
-        cache_path = self.cache_dir / dataset_name
-        processed_path = cache_path / "processed"
-        
-        if not processed_path.exists():
-            processed_path.mkdir(parents=True, exist_ok=True)
-            print(f"Processing {dataset_name} from {raw_path}...")
-
-            raw_data = self._load_raw_data(raw_path)
-
-            processed_data = self._preprocess_fmri(
-                raw_data,
-                tr=tr,
-                target_shape=self.data_config.TARGET_SHAPE,
-                normalize=self.data_config.NORMALIZE,
-                use_wavelet=self.data_config.USE_WAVELET
-            )
-
-            self._save_processed_data(processed_data, processed_path)
-
-        self.data_paths.extend(list(processed_path.glob("*.npy")))
-
-
 def pad_collate(batch):
-    try:
-        max_len = 0
-        for x, _ in batch:
-            if x is None or not hasattr(x, 'shape'):
-                raise ValueError("Invalid sample in batch")
-            max_len = max(max_len, x.shape[-1])
+    max_len = max(x.shape[-1] for x, _ in batch)
+    batch_size = len(batch)
+    sample_shape = batch[0][0].shape[:-1]
 
-        batch_size = len(batch)
-        sample_shape = batch[0][0].shape[:-1]
-        
-        # Keep tensors on CPU during collation
-        padded_data = torch.zeros(
-            (batch_size, *sample_shape, max_len),
-            dtype=torch.float32,
-            device='cpu'
-        )
-        labels = torch.zeros(batch_size, dtype=torch.long, device='cpu')
+    # Keep tensors on CPU during collation
+    padded_data = torch.zeros(
+        (batch_size, *sample_shape, max_len),
+        dtype=torch.float32,
+        device='cpu'
+    )
+    labels = torch.zeros(batch_size, dtype=torch.long, device='cpu')
 
-        for i, (x, y) in enumerate(batch):
-            try:
-                x_float32 = x.to(dtype=torch.float32, device='cpu')
-                padded_data[i, ..., :x.shape[-1]] = x_float32
-                labels[i] = y
-            except Exception as e:
-                logger.error(f"Error processing sample {i}: {str(e)}")
-                continue
+    for i, (x, y) in enumerate(batch):
+        x_float32 = x.to(dtype=torch.float32, device='cpu')
+        padded_data[i, ..., :x.shape[-1]] = x_float32
+        labels[i] = y
 
-        return padded_data, labels
-        
-    except Exception as e:
-        logger.error(f"Collate error: {str(e)}")
-        return torch.tensor([]), torch.tensor([])
+    return padded_data, labels
 
 
 def create_dataloaders(train_ds, val_ds, test_ds, config):
@@ -909,25 +826,19 @@ class SpectrogramDataset(Dataset):
     def __getitem__(self, idx):
         path = self.paths[idx]
         label = self.labels[idx]
-        
-        try:
-            data = np.load(path)
 
-            if data.shape[-1] > self.max_timepoints:
-                data = data[..., :self.max_timepoints]  
-            elif data.shape[-1] < self.max_timepoints:
-                pad_width = [(0, 0)] * (data.ndim - 1) + [(0, self.max_timepoints - data.shape[-1])]
-                data = np.pad(data, pad_width, mode='constant')
+        data = np.load(path)
 
-            data = torch.from_numpy(data).float()
-            
-            if self.transform:
-                data = self.transform(data)
-                
-            return data, label
-            
-        except Exception as e:
-            logger.error(f"Error loading sample {path}: {str(e)}")
-            data = torch.zeros((data.shape[0], data.shape[1], self.max_timepoints), dtype=torch.float32)
-            return data, label
+        if data.shape[-1] > self.max_timepoints:
+            data = data[..., :self.max_timepoints]
+        elif data.shape[-1] < self.max_timepoints:
+            pad_width = [(0, 0)] * (data.ndim - 1) + [(0, self.max_timepoints - data.shape[-1])]
+            data = np.pad(data, pad_width, mode='constant')
+
+        data = torch.from_numpy(data).float()
+
+        if self.transform:
+            data = self.transform(data)
+
+        return data, label
 
