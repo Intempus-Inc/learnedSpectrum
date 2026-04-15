@@ -2,38 +2,22 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
-from pathlib import Path
-import sys
 import numpy as np
 from sklearn.metrics import (
-    confusion_matrix,
     balanced_accuracy_score,
     precision_score,
     recall_score,
     f1_score,
 )
-from typing import Optional, Tuple, Dict
 from tqdm import tqdm
-import os
-import math
-from torch.optim.lr_scheduler import LambdaLR
 
 from learnedSpectrum.utils import (
-    seed_everything,
-    get_optimizer,
     verify_model_devices,
-    calculate_metrics,
     save_checkpoint,
-    load_checkpoint,
-    print_gpu_memory,
     get_cosine_schedule_with_warmup,
     enable_memory_efficient_attention,
     checkpoint_wrapper,
 )
-from learnedSpectrum.physiological import PhysiologicalStateTracker
-from learnedSpectrum.causal import CausalAnalysisModule
-from learnedSpectrum.visualization import TemporalUnderstandingVisualizer
 
 
 logger = logging.getLogger(__name__)
@@ -59,7 +43,7 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, scaler, config):
     torch.cuda.empty_cache()  # Clear cache before training
 
     # Progress bar with better description
-    pbar = tqdm(train_loader, desc=f"Training", leave=False, dynamic_ncols=True)
+    pbar = tqdm(train_loader, desc="Training", leave=False, dynamic_ncols=True)
 
     for batch_idx, (x, y) in enumerate(pbar):
         try:
