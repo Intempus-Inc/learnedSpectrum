@@ -2,9 +2,7 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn as nn
 import networkx as nx
-import numpy as np
 from dataclasses import dataclass
-from torch.distributions import Normal
 
 @dataclass
 class CausalVariable:
