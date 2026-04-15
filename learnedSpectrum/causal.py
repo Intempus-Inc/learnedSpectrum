@@ -4,10 +4,11 @@ import torch.nn as nn
 import networkx as nx
 from dataclasses import dataclass
 
+
 @dataclass
 class CausalVariable:
     name: str
-    type: str  
+    type: str
     temporal_lag: int = 0
     is_observed: bool = True
 
@@ -16,49 +17,47 @@ class CausalGraph:
     def __init__(self):
         self.graph = nx.DiGraph()
         self.variables: Dict[str, CausalVariable] = {}
-        
+
     def add_variable(self, var: CausalVariable):
         self.variables[var.name] = var
-        self.graph.add_node(var.name, 
-                          type=var.type,
-                          temporal_lag=var.temporal_lag,
-                          is_observed=var.is_observed)
-        
+        self.graph.add_node(
+            var.name,
+            type=var.type,
+            temporal_lag=var.temporal_lag,
+            is_observed=var.is_observed,
+        )
+
     def add_edge(self, cause: str, effect: str):
         if cause not in self.variables or effect not in self.variables:
             raise ValueError("Variables must be added before creating edges")
         self.graph.add_edge(cause, effect)
-        
+
     def get_backdoor_paths(self, treatment: str, outcome: str) -> List[List[str]]:
-        return [p for p in nx.all_simple_paths(self.graph, treatment, outcome)
-                if self._is_backdoor_path(p)]
-                
+        return [
+            p
+            for p in nx.all_simple_paths(self.graph, treatment, outcome)
+            if self._is_backdoor_path(p)
+        ]
+
     def _is_backdoor_path(self, path: List[str]) -> bool:
         return len(path) > 2 and all(
-            self.variables[node].type == 'confounder' 
-            for node in path[1:-1]
+            self.variables[node].type == "confounder" for node in path[1:-1]
         )
-    
+
 
 class CausalEstimator(nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int):
         super().__init__()
         self.dim_reduce = nn.Sequential(
-            nn.Linear(16, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(0.1)
+            nn.Linear(16, hidden_dim), nn.GELU(), nn.Dropout(0.1)
         )
 
         self.feature_net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(0.1)
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Dropout(0.1)
         )
 
         self.treatment_net = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 16)
+            nn.Linear(hidden_dim, hidden_dim), nn.GELU(), nn.Linear(hidden_dim, 16)
         )
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -76,17 +75,18 @@ class CausalEstimator(nn.Module):
 class TemporalCausalConv(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int):
         super().__init__()
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size,
-                            padding=(kernel_size - 1))
+        self.conv = nn.Conv1d(
+            in_channels, out_channels, kernel_size, padding=(kernel_size - 1)
+        )
         self.norm = nn.BatchNorm1d(out_channels)
         self.activation = nn.GELU()
         # Zero out the right half of the kernel so each output at time t only
         # depends on inputs at times <= t — this is what makes it "causal".
-        self.register_buffer('mask', self._get_causal_mask(kernel_size))
+        self.register_buffer("mask", self._get_causal_mask(kernel_size))
 
     def _get_causal_mask(self, kernel_size: int) -> torch.Tensor:
         mask = torch.ones(kernel_size)
-        mask[kernel_size//2 + 1:] = 0
+        mask[kernel_size // 2 + 1 :] = 0
         return mask.view(1, 1, -1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -110,36 +110,37 @@ class TemporalCausalConv(nn.Module):
 class CausalAnalysisModule(nn.Module):
     def __init__(self, feature_dim: int, temporal_dim: int):
         super().__init__()
-        
+
         self.temporal_encoder = nn.GRU(
             input_size=feature_dim,
             hidden_size=temporal_dim,
             num_layers=2,
             batch_first=True,
-            bidirectional=True
+            bidirectional=True,
         )
-        
+
         self.causal_estimator = nn.Sequential(
             nn.Linear(temporal_dim * 2, temporal_dim),
             nn.GELU(),
             nn.Linear(temporal_dim, 1),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
-        
+
         self.temporal_attention = nn.MultiheadAttention(
-            embed_dim=temporal_dim * 2,
-            num_heads=4,
-            batch_first=True
+            embed_dim=temporal_dim * 2, num_heads=4, batch_first=True
         )
-        
-    def compute_causal_strength(self, x: torch.Tensor,
-                              temporal_mask: Optional[torch.Tensor] = None):
+
+    def compute_causal_strength(
+        self, x: torch.Tensor, temporal_mask: Optional[torch.Tensor] = None
+    ):
         temporal_features, _ = self.temporal_encoder(x)
 
         if temporal_mask is not None:
             attended_features, _ = self.temporal_attention(
-                temporal_features, temporal_features, temporal_features,
-                key_padding_mask=temporal_mask
+                temporal_features,
+                temporal_features,
+                temporal_features,
+                key_padding_mask=temporal_mask,
             )
         else:
             attended_features, _ = self.temporal_attention(

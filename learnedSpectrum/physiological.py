@@ -6,27 +6,19 @@ from typing import Optional
 class PhysiologicalStateTracker(nn.Module):
     def __init__(self, input_dim: int, num_states: int = 8):
         super().__init__()
-        
+
         self.state_encoder = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.LayerNorm(256),
-            nn.GELU(),
-            nn.Linear(256, 128)
+            nn.Linear(input_dim, 256), nn.LayerNorm(256), nn.GELU(), nn.Linear(256, 128)
         )
-        
+
         self.state_classifier = nn.Sequential(
-            nn.Linear(128, 64),
-            nn.GELU(),
-            nn.Linear(64, num_states),
-            nn.Softmax(dim=-1)
+            nn.Linear(128, 64), nn.GELU(), nn.Linear(64, num_states), nn.Softmax(dim=-1)
         )
-        
+
         self.transition_predictor = nn.Sequential(
-            nn.Linear(128 * 2, 128),
-            nn.GELU(),
-            nn.Linear(128, num_states)
+            nn.Linear(128 * 2, 128), nn.GELU(), nn.Linear(128, num_states)
         )
-        
+
     def forward(self, x: torch.Tensor, prev_state: Optional[torch.Tensor] = None):
         state_features = self.state_encoder(x)
         state_probs = self.state_classifier(state_features)

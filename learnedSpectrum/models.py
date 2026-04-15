@@ -17,14 +17,14 @@ class CustomChannelReduce(nn.Module):
             nn.Conv3d(32, 16, 1),
             nn.BatchNorm3d(16),
             nn.GELU(),
-            nn.Dropout3d(0.1)
+            nn.Dropout3d(0.1),
         )
-    
+
     def forward(self, x):
         x = x.permute(0, 1, 2, 3, 4)
         x = self.reduce(x)
         return x
-    
+
 
 class ResidualBlock3d(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -34,15 +34,14 @@ class ResidualBlock3d(nn.Module):
         self.conv2 = nn.Conv3d(out_channels, out_channels, 1)
         self.bn2 = nn.BatchNorm3d(out_channels)
         self.relu = nn.GELU()
-        
+
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
-                nn.Conv3d(in_channels, out_channels, 1),
-                nn.BatchNorm3d(out_channels)
+                nn.Conv3d(in_channels, out_channels, 1), nn.BatchNorm3d(out_channels)
             )
         else:
             self.shortcut = nn.Identity()
-            
+
     def forward(self, x):
         residual = self.shortcut(x)
         out = self.relu(self.bn1(self.conv1(x)))
@@ -50,10 +49,11 @@ class ResidualBlock3d(nn.Module):
         out += residual
         out = self.relu(out)
         return out
-    
+
 
 def checkpoint_forward(module, *args, **kwargs):
     """Wrapper for consistent checkpoint behavior"""
+
     def custom_forward(*inputs):
         return module(*inputs, **kwargs)
 
@@ -65,10 +65,7 @@ def checkpoint_forward(module, *args, **kwargs):
             args[i] = arg.detach().requires_grad_(True)
 
     return torch.utils.checkpoint.checkpoint(
-        custom_forward,
-        *args,
-        use_reentrant=False,
-        preserve_rng_state=False
+        custom_forward, *args, use_reentrant=False, preserve_rng_state=False
     )
 
 
@@ -78,10 +75,7 @@ class TransformerBlock(nn.Module):
         self.dim = dim
         self.norm1 = nn.LayerNorm(dim)
         self.attn = nn.MultiheadAttention(
-            dim,
-            num_heads,
-            dropout=drop,
-            batch_first=True
+            dim, num_heads, dropout=drop, batch_first=True
         )
         self.norm2 = nn.LayerNorm(dim)
         hidden_dim = int(dim * mlp_ratio)
@@ -90,7 +84,7 @@ class TransformerBlock(nn.Module):
             nn.GELU(),
             nn.Dropout(drop),
             nn.Linear(hidden_dim, dim),
-            nn.Dropout(drop)
+            nn.Dropout(drop),
         )
 
         self.state_proj = nn.Linear(dim, dim)
@@ -123,7 +117,7 @@ class LTCLayer(nn.Module):
             nn.LayerNorm(hidden_dim * 2),
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.Tanh(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(hidden_dim, hidden_dim),
         )
 
         # Per-unit adaptive tau in (tau_min, tau_max); sigmoid keeps output bounded.
@@ -132,7 +126,7 @@ class LTCLayer(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim),
-            nn.Sigmoid()
+            nn.Sigmoid(),
         )
 
         self.state_norm = nn.LayerNorm(hidden_dim)
@@ -195,48 +189,56 @@ class VisionTransformerModel(nn.Module):
         self.config = config
         self.channel_reduce = CustomChannelReduce()
         self.temporal_net = AdaptiveTemporalProcessor(
-            config.EMBED_DIM//2,
-            config.NUM_HEADS//2,
-            config.TEMPORAL_DIM
+            config.EMBED_DIM // 2, config.NUM_HEADS // 2, config.TEMPORAL_DIM
         )
 
-        H_out = (config.VOLUME_SIZE[0] + config.PATCH_SIZE) // (config.PATCH_SIZE//2) - 1
-        W_out = (config.VOLUME_SIZE[1] + config.PATCH_SIZE) // (config.PATCH_SIZE//2) - 1
+        H_out = (config.VOLUME_SIZE[0] + config.PATCH_SIZE) // (
+            config.PATCH_SIZE // 2
+        ) - 1
+        W_out = (config.VOLUME_SIZE[1] + config.PATCH_SIZE) // (
+            config.PATCH_SIZE // 2
+        ) - 1
         self.num_patches = H_out * W_out
 
         # pos_embed is created with a placeholder shape here and resized inside
         # _init_pos_embed() once the final num_patches is known.
-        self.pos_embed = nn.Parameter(
-            torch.zeros(1, 1, config.EMBED_DIM//2)
-        )
+        self.pos_embed = nn.Parameter(torch.zeros(1, 1, config.EMBED_DIM // 2))
 
         self.patch_embed = nn.Sequential(
-            nn.Conv2d(16, config.EMBED_DIM//2,
-                      kernel_size=config.PATCH_SIZE,
-                      stride=config.PATCH_SIZE//2,
-                      padding=config.PATCH_SIZE//2),
+            nn.Conv2d(
+                16,
+                config.EMBED_DIM // 2,
+                kernel_size=config.PATCH_SIZE,
+                stride=config.PATCH_SIZE // 2,
+                padding=config.PATCH_SIZE // 2,
+            ),
             nn.Flatten(2),
-            Permute(0, 2, 1),  # move channel axis last so LayerNorm normalizes over embed dim
-            nn.LayerNorm(config.EMBED_DIM//2),
-            nn.GELU()
+            Permute(
+                0, 2, 1
+            ),  # move channel axis last so LayerNorm normalizes over embed dim
+            nn.LayerNorm(config.EMBED_DIM // 2),
+            nn.GELU(),
         )
 
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, config.EMBED_DIM//2))
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, config.EMBED_DIM // 2))
 
         self._init_pos_embed()
 
-        self.blocks = nn.ModuleList([
-            TransformerBlock(
-                dim=self.config.EMBED_DIM//2,
-                num_heads=self.config.NUM_HEADS,
-                mlp_ratio=4.0,
-                drop=0.1
-            ) for _ in range(self.config.DEPTH)
-        ])
+        self.blocks = nn.ModuleList(
+            [
+                TransformerBlock(
+                    dim=self.config.EMBED_DIM // 2,
+                    num_heads=self.config.NUM_HEADS,
+                    mlp_ratio=4.0,
+                    drop=0.1,
+                )
+                for _ in range(self.config.DEPTH)
+            ]
+        )
 
         self.head = nn.Sequential(
-            nn.LayerNorm(config.EMBED_DIM//2),
-            nn.Linear(config.EMBED_DIM//2, config.NUM_CLASSES)
+            nn.LayerNorm(config.EMBED_DIM // 2),
+            nn.Linear(config.EMBED_DIM // 2, config.NUM_CLASSES),
         )
 
     def _init_pos_embed(self):
@@ -244,13 +246,11 @@ class VisionTransformerModel(nn.Module):
         W = (self.config.VOLUME_SIZE[1] // self.config.PATCH_SIZE) + 1
         self.num_patches = H * W
 
-        embed_dim = self.config.EMBED_DIM//2
+        embed_dim = self.config.EMBED_DIM // 2
         grid_size = int(math.sqrt(self.num_patches))
 
         pos_embed = get_2d_sincos_pos_embed(
-            embed_dim=embed_dim,
-            grid_size=grid_size,
-            cls_token=True
+            embed_dim=embed_dim, grid_size=grid_size, cls_token=True
         )
 
         self.pos_embed = nn.Parameter(torch.from_numpy(pos_embed).float().unsqueeze(0))
@@ -259,7 +259,7 @@ class VisionTransformerModel(nn.Module):
         B, C_in, H_in, W_in, T = x.shape
         chunk_size = min(T, self.config.TEMPORAL_CHUNK_SIZE)
 
-        with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+        with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
             x = self.channel_reduce(x)
 
             h_temporal = None
@@ -286,7 +286,7 @@ class VisionTransformerModel(nn.Module):
                     pos_embed = interpolate_pos_embed(
                         pos_embed=self.pos_embed,
                         target_size=chunk.shape[1] - 1,  # exclude cls token
-                        num_prefix_tokens=1
+                        num_prefix_tokens=1,
                     )
                 else:
                     pos_embed = self.pos_embed
@@ -306,15 +306,20 @@ class VisionTransformerModel(nn.Module):
 
             for emb in chunk_embeddings:
                 if emb.size(1) < max_length:
-                    padding = torch.zeros(B, max_length - emb.size(1), emb.size(-1),
-                                       device=emb.device, dtype=emb.dtype)
+                    padding = torch.zeros(
+                        B,
+                        max_length - emb.size(1),
+                        emb.size(-1),
+                        device=emb.device,
+                        dtype=emb.dtype,
+                    )
                     emb = torch.cat([emb, padding], dim=1)
                 padded_embeddings.append(emb)
 
             embeddings = torch.cat(padded_embeddings, dim=1)
             logits = self.head(embeddings.mean(dim=1))
 
-            return logits, {'temporal_states': temporal_states}
+            return logits, {"temporal_states": temporal_states}
 
 
 class AdaptiveTemporalProcessor(nn.Module):
@@ -328,7 +333,7 @@ class AdaptiveTemporalProcessor(nn.Module):
             nn.Linear(dim, dim // 2),
             nn.LayerNorm(dim // 2),
             nn.GELU(),
-            nn.Linear(dim // 2, dim)
+            nn.Linear(dim // 2, dim),
         )
         self.temporal_conv = nn.Conv1d(dim, dim, kernel_size=3, padding=1, groups=8)
         self.output_proj = nn.Sequential(
@@ -336,19 +341,19 @@ class AdaptiveTemporalProcessor(nn.Module):
             nn.LayerNorm(dim * 2),
             nn.GELU(),
             nn.Dropout(0.1),
-            nn.Linear(dim * 2, 16)
+            nn.Linear(dim * 2, 16),
         )
 
     def forward(self, x, h, dt):
         B, C, H, W, T = x.shape
 
         chunk_size = 16
-        x_flat = x.permute(0, 4, 1, 2, 3).reshape(B*T, C, H*W)
+        x_flat = x.permute(0, 4, 1, 2, 3).reshape(B * T, C, H * W)
         x_flat = x_flat.transpose(1, 2)
 
         outputs = []
-        for i in range(0, B*T, chunk_size):
-            end_idx = min(i + chunk_size, B*T)
+        for i in range(0, B * T, chunk_size):
+            end_idx = min(i + chunk_size, B * T)
             chunk = x_flat[i:end_idx]
 
             # Drop prior chunk's intermediates before allocating new ones; this
@@ -358,30 +363,29 @@ class AdaptiveTemporalProcessor(nn.Module):
                 torch.cuda.empty_cache()
 
             chunk = self.input_proj(chunk)
-            temporal_repr, _ = torch.utils.checkpoint.checkpoint(self.temporal_attn, chunk)
+            temporal_repr, _ = torch.utils.checkpoint.checkpoint(
+                self.temporal_attn, chunk
+            )
 
             if h is None:
                 h_chunk = torch.zeros(
                     (1, temporal_repr.size(1), temporal_repr.size(2)),
                     device=temporal_repr.device,
-                    dtype=temporal_repr.dtype
+                    dtype=temporal_repr.dtype,
                 )
             else:
                 h_chunk = h[i:end_idx]
 
             ltc_state = self.ltc(temporal_repr, h_chunk, dt)
 
-            with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                 causal_features = self.causal_estimator(temporal_repr)
                 conv_input = temporal_repr.transpose(1, 2)
                 temporal_features = self.temporal_conv(conv_input).transpose(1, 2)
 
-            combined = torch.cat([
-                temporal_repr,
-                ltc_state,
-                causal_features,
-                temporal_features
-            ], dim=-1)
+            combined = torch.cat(
+                [temporal_repr, ltc_state, causal_features, temporal_features], dim=-1
+            )
 
             output = self.output_proj(combined)
             outputs.append(output.detach())
@@ -400,10 +404,7 @@ class TemporalCausalConv(nn.Module):
         # Same-padding preserves sequence length across the conv.
         padding = (kernel_size - 1) // 2
         self.conv = nn.Conv1d(
-            in_channels=16,
-            out_channels=16,
-            kernel_size=kernel_size,
-            padding=padding
+            in_channels=16, out_channels=16, kernel_size=kernel_size, padding=padding
         )
         self.norm = nn.BatchNorm1d(16)
         self.activation = nn.GELU()
@@ -415,7 +416,7 @@ class TemporalCausalConv(nn.Module):
         x = self.norm(x)
         x = self.activation(x)
         return x.transpose(1, 2)
-    
+
 
 def get_2d_sincos_pos_embed(embed_dim, grid_size, cls_token=False):
     """
@@ -458,11 +459,11 @@ def get_1d_sincos_pos_embed_from_grid(embed_dim, pos):
     """
     assert embed_dim % 2 == 0
     omega = np.arange(embed_dim // 2, dtype=np.float32)
-    omega /= embed_dim / 2.
-    omega = 1. / 10000**omega  # (D/2,)
+    omega /= embed_dim / 2.0
+    omega = 1.0 / 10000**omega  # (D/2,)
 
     pos = pos.reshape(-1)  # (M,)
-    out = np.einsum('m,d->md', pos, omega)  # (M, D/2) outer product
+    out = np.einsum("m,d->md", pos, omega)  # (M, D/2) outer product
 
     emb_sin = np.sin(out)
     emb_cos = np.cos(out)
@@ -475,10 +476,7 @@ def interpolate_pos_embed(pos_embed, target_size, num_prefix_tokens=1):
     pos_tokens = pos_embed[:, num_prefix_tokens:]  # exclude cls token
     pos_tokens = pos_tokens.transpose(1, 2)
     pos_tokens = F.interpolate(
-        pos_tokens.unsqueeze(0),
-        size=(target_size),
-        mode='linear',
-        align_corners=False
+        pos_tokens.unsqueeze(0), size=(target_size), mode="linear", align_corners=False
     )
     pos_tokens = pos_tokens.squeeze(0).transpose(1, 2)
 
@@ -490,15 +488,15 @@ class Lambda(nn.Module):
     def __init__(self, func):
         super().__init__()
         self.func = func
-        
+
     def forward(self, x):
-        return self.func(x) 
+        return self.func(x)
 
 
 class Permute(nn.Module):
     def __init__(self, *dims):
         super().__init__()
         self.dims = dims
-        
+
     def forward(self, x):
-        return x.permute(*self.dims) 
+        return x.permute(*self.dims)
