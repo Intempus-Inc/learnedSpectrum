@@ -29,15 +29,13 @@ class PhysiologicalStateTracker(nn.Module):
         )
         
     def forward(self, x: torch.Tensor, prev_state: Optional[torch.Tensor] = None):
-        # Encode current physiological state
         state_features = self.state_encoder(x)
         state_probs = self.state_classifier(state_features)
-        
-        # Predict state transitions if previous state available
+
         if prev_state is not None:
             prev_features = self.state_encoder(prev_state)
             combined = torch.cat([prev_features, state_features], dim=-1)
             transition_logits = self.transition_predictor(combined)
             return state_probs, transition_logits
-            
-        return state_probs, None 
+
+        return state_probs, None

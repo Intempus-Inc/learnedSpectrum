@@ -82,8 +82,7 @@ class HJBSolver(nn.Module):
     def __init__(self, state_dim):
         super().__init__()
         self.state_dim = state_dim
-        
-        # Enhanced value network
+
         self.value_net = nn.Sequential(
             nn.LayerNorm(state_dim),
             nn.Linear(state_dim, state_dim * 2),
@@ -91,8 +90,7 @@ class HJBSolver(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(state_dim * 2, 1)
         )
-        
-        # Enhanced action network
+
         self.action_net = nn.Sequential(
             nn.LayerNorm(state_dim),
             nn.Linear(state_dim, state_dim * 2),
@@ -100,34 +98,29 @@ class HJBSolver(nn.Module):
             nn.Dropout(0.1),
             nn.Linear(state_dim * 2, state_dim)
         )
-        
-        # Add temporal consistency layer
+
         self.temporal_consistency = nn.GRU(
-            state_dim, state_dim, 
-            num_layers=1, 
+            state_dim, state_dim,
+            num_layers=1,
             batch_first=True
         )
-        
+
     def forward(self, x, dt):
         batch_size = x.size(0)
-        
-        # Ensure consistent dimensions
+
         if x.dim() == 3:  # [B, T, D]
             x_flat = x.reshape(-1, self.state_dim)
         else:
             x_flat = x
-            
-        # Compute value and action
+
         value = self.value_net(x_flat)
         action = self.action_net(x_flat)
-        
-        # Apply temporal consistency
+
         if x.dim() == 3:
             _, h = self.temporal_consistency(x)
             action = action.view(batch_size, -1, self.state_dim)
             value = value.view(batch_size, -1, 1)
-            
-        # Scale action by dt
+
         action = action * dt.view(-1, 1)
-        
-        return action, value 
+
+        return action, value

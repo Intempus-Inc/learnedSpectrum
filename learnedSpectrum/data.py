@@ -554,20 +554,19 @@ class DatasetManager:
         logger.info(f"Creating dataset with {len(paths)} paths and {len(labels)} labels")
 
         max_timepoints = 0
-        # Add progress bar for finding max timepoints
         for path in tqdm(paths, desc="Analyzing timepoints", unit="file"):
             try:
                 data = np.load(path)
-                if isinstance(data, np.ndarray):  
+                if isinstance(data, np.ndarray):
                     max_timepoints = max(max_timepoints, data.shape[-1])
                 else:
                     logger.warning(f"Loaded data is not a numpy array: {type(data)}")
             except Exception as e:
                 logger.error(f"Error loading file {path}: {str(e)}")
                 continue
-            
+
         logger.info(f"Maximum timepoints found: {max_timepoints}")
-        
+
         if max_timepoints == 0:
             logger.error("No valid timepoints found in any samples!")
             return None
@@ -593,11 +592,10 @@ class DatasetManager:
 
     def prepare_datasets(self):
         logger.info("Starting dataset preparation...")
-        
+
         valid_samples = []
         labels = []
-        
-        # Add progress bar for sample validation
+
         for path in tqdm(self.data_paths, desc="Validating samples", unit="file"):
             stage = self._determine_learning_stage(path)
             if stage:
@@ -607,13 +605,11 @@ class DatasetManager:
         samples = np.array(valid_samples)
         labels = np.array(labels)
 
-        # Log label distribution
         unique, counts = np.unique(labels, return_counts=True)
         logger.info("Label distribution:")
         for label, count in zip(unique, counts):
             logger.info(f"Label {label}: {count} samples")
 
-        # Add progress description for splitting
         logger.info("Splitting datasets...")
         train_samples, temp_samples, train_labels, temp_labels = train_test_split(
             samples, labels,
@@ -630,24 +626,22 @@ class DatasetManager:
             random_state=42
         )
 
-        # Add progress indicators for dataset creation
         logger.info("Creating train dataset...")
         train_ds = self._create_dataset(train_samples, train_labels)
-        
+
         logger.info("Creating validation dataset...")
         val_ds = self._create_dataset(val_samples, val_labels)
-        
+
         logger.info("Creating test dataset...")
         test_ds = self._create_dataset(test_samples, test_labels)
 
-        # Log dataset distributions
         for name, dataset in [("Train", train_ds), ("Val", val_ds), ("Test", test_ds)]:
             labels = [label for _, label in dataset]
             unique, counts = np.unique(labels, return_counts=True)
             logger.info(f"\n{name} set label distribution:")
             for label, count in zip(unique, counts):
                 logger.info(f"Label {label}: {count} samples")
-        
+
         return train_ds, val_ds, test_ds
 
     def _extract_label_from_path(self, path: Path) -> Optional[int]:
@@ -836,8 +830,8 @@ def pad_collate(batch):
 
         batch_size = len(batch)
         sample_shape = batch[0][0].shape[:-1]
-        
-        # Keep tensors on CPU during collation
+
+        # Allocate on CPU; DataLoader workers can't touch CUDA.
         padded_data = torch.zeros(
             (batch_size, *sample_shape, max_len),
             dtype=torch.float32,
