@@ -12,7 +12,11 @@ class TemporalUnderstandingVisualizer:
     def __init__(self, save_dir: str = 'visualizations'):
         self.save_dir = Path(save_dir)
         self.save_dir.mkdir(parents=True, exist_ok=True)
-        
+
+    def _save_and_close(self, save_name: str) -> None:
+        plt.savefig(self.save_dir / f'{save_name}.png')
+        plt.close()
+
     def plot_physiological_dynamics(self, states_history: List[torch.Tensor],
                                   timestamps: List[float],
                                   save_name: str = 'physiological_dynamics'):
@@ -34,8 +38,7 @@ class TemporalUnderstandingVisualizer:
             plt.xlabel('TSNE Dimension 1')
             plt.ylabel('TSNE Dimension 2')
 
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
 
     def plot_causal_analysis(self, causal_data: Dict[str, Any],
                            save_name: str = 'causal_analysis'):
@@ -71,8 +74,7 @@ class TemporalUnderstandingVisualizer:
         axes[0, 1].set_title('Distribution of Treatment Effects')
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
 
     def plot_temporal_understanding_metrics(self, metrics: Dict[str, Any],
                                          save_name: str = 'temporal_metrics'):
@@ -102,8 +104,7 @@ class TemporalUnderstandingVisualizer:
         axes[2, 1].set_title('State Transition Probabilities')
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
 
     def create_temporal_understanding_report(self, results: Dict[str, Any],
                                           save_name: str = 'temporal_report'):
@@ -114,8 +115,7 @@ class TemporalUnderstandingVisualizer:
         self.plot_causal_inference(results['causal_analysis'])
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
 
     def plot_ltc_dynamics(self, ltc_data: Dict[str, Any], save_name: str = 'ltc_dynamics'):
         fig, axes = plt.subplots(2, 2, figsize=(20, 15))
@@ -147,8 +147,7 @@ class TemporalUnderstandingVisualizer:
         axes[1, 1].set_title('State Transition Probabilities')
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
 
     def plot_causal_inference_results(self, causal_data: Dict[str, Any],
                                     save_name: str = 'causal_inference'):
@@ -183,5 +182,4 @@ class TemporalUnderstandingVisualizer:
         axes[1, 1].set_title('Temporal Causal Strength')
 
         plt.tight_layout()
-        plt.savefig(self.save_dir / f'{save_name}.png')
-        plt.close()
+        self._save_and_close(save_name)
