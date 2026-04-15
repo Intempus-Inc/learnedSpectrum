@@ -3,7 +3,7 @@ import seaborn as sns
 import networkx as nx
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 import torch
 from sklearn.manifold import TSNE
 

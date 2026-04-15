@@ -2,31 +2,19 @@ import logging
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.cuda.amp import autocast
-from pathlib import Path
-import sys
 import numpy as np
 from sklearn.metrics import (
-    confusion_matrix,
     balanced_accuracy_score,
-    precision_score, 
-    recall_score, 
+    precision_score,
+    recall_score,
     f1_score
 )
-from typing import Optional, Tuple, Dict
 from tqdm import tqdm
-import os
-import math
-from torch.optim.lr_scheduler import LambdaLR
 
 from learnedSpectrum.utils import (
-    seed_everything, get_optimizer, verify_model_devices,
-    calculate_metrics, save_checkpoint, load_checkpoint, print_gpu_memory,
+    verify_model_devices, save_checkpoint,
     get_cosine_schedule_with_warmup, enable_memory_efficient_attention, checkpoint_wrapper
 )
-from learnedSpectrum.physiological import PhysiologicalStateTracker
-from learnedSpectrum.causal import CausalAnalysisModule
-from learnedSpectrum.visualization import TemporalUnderstandingVisualizer
 
 
 logger = logging.getLogger(__name__)
@@ -56,7 +44,6 @@ def train_one_epoch(model, train_loader, optimizer, scheduler, scaler, config):
 
     for batch_idx, (x, y) in enumerate(pbar):
         try:
-            B = x.size(0)
             x = x.to(config.device, dtype=torch.float16, non_blocking=True)
             y = y.to(config.device, non_blocking=True)
 

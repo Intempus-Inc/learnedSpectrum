@@ -1,8 +1,7 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, Tuple
 from pathlib import Path
 import torch
-from .data import CognitiveProcess, TaskPhase
 from .utils import (
     get_ds000002_stage,
     get_ds000011_stage,
