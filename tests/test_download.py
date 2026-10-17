@@ -171,6 +171,20 @@ class ArchiveExtractionTests(unittest.TestCase):
                 download.extract_archive(archive, target)
                 self.assertEqual((target / "data.txt").read_text(), "new")
 
+    @unittest.skipUnless(hasattr(os, "symlink"), "symlinks are unavailable")
+    def test_resolved_containment_catches_aliases_not_reported_as_symlinks(self):
+        archive, target = self.paths("resolved-alias", ".zip")
+        target.mkdir()
+        outside = target.parent / "outside"
+        outside.mkdir()
+        (target / "alias").symlink_to(outside, target_is_directory=True)
+        make_archive(archive, [("alias/escaped.txt", "file", "bad")])
+        # Models a directory alias such as a junction without claiming Windows execution.
+        with mock.patch.object(Path, "is_symlink", return_value=False):
+            with self.assertRaises(ValueError):
+                download.extract_archive(archive, target)
+        self.assertFalse((outside / "escaped.txt").exists())
+
     @unittest.skipUnless(hasattr(os, "link"), "hard links are unavailable")
     def test_existing_hard_link_does_not_overwrite_its_external_inode(self):
         for suffix in (".zip", ".tgz"):
@@ -197,6 +211,127 @@ class ArchiveExtractionTests(unittest.TestCase):
                         download.extract_archive(archive, target)
                 self.assertEqual((target / "data.txt").read_text(), "preserved")
                 self.assertEqual([item.name for item in target.iterdir()], ["data.txt"])
+
+
+class DatasetReplacementTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.raw = Path(self.temporary.name) / "raw"
+        self.raw.mkdir()
+        self.target = self.raw / "synthetic"
+        self.target.mkdir()
+        (self.target / "original.txt").write_text("original dataset")
+        self.shared = self.raw / "temp"
+        self.shared.mkdir()
+        (self.shared / "unrelated.txt").write_text("keep this")
+        self.download_paths = []
+        datasets = {"synthetic": {"url": "https://example.invalid/synthetic.zip", "description": "Synthetic fixture"}}
+        for patch in (mock.patch.object(download, "setup_data_directories", return_value=self.raw),
+                      mock.patch.object(download, "DATASETS", datasets)):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def fake_download(self, url, destination):
+        self.download_paths.append(destination)
+        make_archive(destination, [("replacement.txt", "file", "replacement dataset")])
+
+    def assert_original(self):
+        self.assertEqual((self.target / "original.txt").read_text(), "original dataset")
+        self.assertEqual([path.name for path in self.target.iterdir()], ["original.txt"])
+        self.assertEqual((self.shared / "unrelated.txt").read_text(), "keep this")
+
+    def assert_no_staging(self):
+        self.assertEqual(sorted(path.name for path in self.raw.iterdir()), ["synthetic", "temp"])
+
+    def test_nonforced_existing_dataset_is_skipped(self):
+        with mock.patch.object(download, "download_file") as fetch:
+            download.download_datasets()
+        fetch.assert_not_called()
+        self.assert_original()
+        self.assert_no_staging()
+
+    def test_failed_forced_download_preserves_existing_dataset_and_shared_temp(self):
+        def fail_download(url, destination):
+            destination.write_bytes(b"partial archive")
+            raise OSError("Synthetic download failure")
+        with mock.patch.object(download, "download_file", side_effect=fail_download):
+            with self.assertRaises(SystemExit) as raised:
+                download.download_datasets(force_download=True)
+        self.assertEqual(raised.exception.code, 1)
+        self.assert_original()
+        self.assert_no_staging()
+
+    def test_failed_forced_extraction_preserves_existing_dataset_and_shared_temp(self):
+        def fail_extract(archive, destination):
+            self.assertNotEqual(destination, self.target)
+            destination.mkdir()
+            (destination / "partial.txt").write_text("partial extraction")
+            raise ValueError("Synthetic extraction failure")
+        with mock.patch.object(download, "download_file", side_effect=self.fake_download), \
+             mock.patch.object(download, "extract_archive", side_effect=fail_extract):
+            with self.assertRaises(SystemExit):
+                download.download_datasets(force_download=True)
+        self.assert_original()
+        self.assert_no_staging()
+
+    def test_successful_forced_refresh_replaces_only_after_complete_extraction(self):
+        original_extract = download.extract_archive
+        def inspect_extract(archive, destination):
+            self.assert_original()
+            self.assertNotEqual(destination, self.target)
+            original_extract(archive, destination)
+            self.assert_original()
+        with mock.patch.object(download, "download_file", side_effect=self.fake_download), \
+             mock.patch.object(download, "extract_archive", side_effect=inspect_extract):
+            download.download_datasets(force_download=True)
+        self.assertEqual((self.target / "replacement.txt").read_text(), "replacement dataset")
+        self.assertFalse((self.target / "original.txt").exists())
+        self.assertEqual((self.shared / "unrelated.txt").read_text(), "keep this")
+        self.assert_no_staging()
+
+    def test_failed_install_restores_previous_dataset(self):
+        real_replace = Path.replace
+        def fail_install(source, destination):
+            if source.name == "extracted":
+                raise OSError("Synthetic installation failure")
+            return real_replace(source, destination)
+        with mock.patch.object(download, "download_file", side_effect=self.fake_download), \
+             mock.patch.object(Path, "replace", fail_install):
+            with self.assertRaises(SystemExit):
+                download.download_datasets(force_download=True)
+        self.assert_original()
+        self.assert_no_staging()
+
+    def test_failed_rollback_preserves_backup_for_manual_recovery(self):
+        real_replace = Path.replace
+        def fail_install_and_rollback(source, destination):
+            if source.name in ("extracted", "previous"):
+                raise OSError("Synthetic rename failure")
+            return real_replace(source, destination)
+        with mock.patch.object(download, "download_file", side_effect=self.fake_download), \
+             mock.patch.object(Path, "replace", fail_install_and_rollback):
+            with self.assertRaises(SystemExit):
+                download.download_datasets(force_download=True)
+        backups = list(self.raw.glob(".synthetic-*/previous/original.txt"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_text(), "original dataset")
+        self.assertEqual((self.shared / "unrelated.txt").read_text(), "keep this")
+
+    def test_fresh_datasets_use_distinct_staging_directories(self):
+        datasets = {name: {"url": "https://example.invalid/fixture.zip", "description": "Synthetic fixture"}
+                    for name in ("new-one", "new-two")}
+        with mock.patch.object(download, "DATASETS", datasets), \
+             mock.patch.object(download, "download_file", side_effect=self.fake_download):
+            download.download_datasets()
+        self.assertEqual(len({path.parent for path in self.download_paths}), 2)
+        for path in self.download_paths:
+            self.assertEqual(path.parent.parent, self.raw)
+            self.assertNotEqual(path.parent, self.shared)
+            self.assertFalse(path.parent.exists())
+        for name in datasets:
+            self.assertEqual((self.raw / name / "replacement.txt").read_text(), "replacement dataset")
+        self.assert_original()
 
 
 if __name__ == "__main__":

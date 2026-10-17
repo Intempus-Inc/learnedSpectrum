@@ -103,6 +103,10 @@ def _member_path(root: Path, name: str) -> Path:
         target = target / part
         if target.is_symlink():
             raise ValueError(f"Archive path follows an existing symlink: {name!r}")
+    try:
+        target.resolve().relative_to(root)
+    except ValueError:
+        raise ValueError(f"Archive path resolves outside the extraction directory: {name!r}") from None
     return target
 
 
@@ -203,7 +207,9 @@ def get_file_extension(url: str) -> str:
 
 def download_datasets(force_download: bool = False) -> None:
     """
-    Download and extract all required datasets
+    Download into unique staging directories and replace completed datasets.
+
+    Only one process may refresh a given dataset at a time.
     """
     raw_dir = setup_data_directories()
     success = True
@@ -211,15 +217,15 @@ def download_datasets(force_download: bool = False) -> None:
     for dataset_id, info in DATASETS.items():
         dataset_dir = raw_dir / dataset_id
 
-        if dataset_dir.exists() and not force_download:
+        if (dataset_dir.exists() or dataset_dir.is_symlink()) and not force_download:
             logger.info(f"Dataset {dataset_id} already exists. Skipping...")
             continue
 
         logger.info(f"Processing {dataset_id} - {info['description']}")
 
-        # Create temporary directory for downloads
-        temp_dir = raw_dir / "temp"
-        temp_dir.mkdir(exist_ok=True)
+        temp_dir = Path(tempfile.mkdtemp(prefix=f".{dataset_id}-", dir=str(raw_dir)))
+        backup = temp_dir / "previous"
+        installed = False
 
         try:
             # Get correct file extension from URL
@@ -228,20 +234,29 @@ def download_datasets(force_download: bool = False) -> None:
             archive_path = temp_dir / f"{dataset_id}{file_ext}"
             download_file(info["url"], archive_path)
 
-            # Extract to raw directory
-            extract_archive(archive_path, dataset_dir)
+            staged = temp_dir / "extracted"
+            extract_archive(archive_path, staged)
+
+            try:
+                if dataset_dir.exists() or dataset_dir.is_symlink():
+                    dataset_dir.replace(backup)
+                staged.replace(dataset_dir)
+            except BaseException:
+                if backup.exists() or backup.is_symlink():
+                    backup.replace(dataset_dir)
+                raise
+            installed = True
 
             logger.info(f"Successfully downloaded and extracted {dataset_id}")
 
         except Exception as e:
             success = False
             logger.error(f"Error processing {dataset_id}: {str(e)}")
-            if dataset_dir.exists():
-                shutil.rmtree(dataset_dir)
 
         finally:
-            # Cleanup temporary files
-            if temp_dir.exists():
+            if not installed and (backup.exists() or backup.is_symlink()):
+                logger.error(f"Previous dataset preserved at {backup}; restore it before retrying.")
+            else:
                 shutil.rmtree(temp_dir)
 
     if success:
