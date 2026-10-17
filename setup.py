@@ -16,7 +16,7 @@ setup(
     description="fMRI Learning Stage Classification with Vision Transformers",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Twarner491/learnedSpectrum",
+    url="https://github.com/Intempus-Inc/learnedSpectrum",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -27,7 +27,6 @@ setup(
         "Programming Language :: Python :: 3.8",
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
-        "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
     python_requires=">=3.8",
@@ -41,11 +40,6 @@ setup(
             "flake8>=3.9",
             "mypy>=0.9",
         ]
-    },
-    entry_points={
-        "console_scripts": [
-            "learnedspectrum=learnedSpectrum.train:main",
-        ],
     },
     include_package_data=True,
     package_data={

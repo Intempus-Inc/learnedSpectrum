@@ -21,6 +21,7 @@ wheels/
 *.egg
 
 # Virtual Environment
+.venv/
 venv/
 env/
 ENV/
@@ -85,3 +86,6 @@ coverage.xml
 
 # Package specific
 learnedSpectrum.egg-info/
+
+# Local reference copies; source citations are in data/methods/README.md
+/data/methods/*.pdf

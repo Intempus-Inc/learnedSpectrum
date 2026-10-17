@@ -6,12 +6,14 @@ Downloads and extracts required OpenFMRI datasets
 import os
 import sys
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import requests
 from tqdm import tqdm
 import zipfile
 import tarfile
 import shutil
+import stat
+import tempfile
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -68,53 +70,104 @@ def download_file(url: str, destination: Path, chunk_size: int = 8192) -> None:
     response.raise_for_status()
     total_size = int(response.headers.get("content-length", 0))
 
-    with (
-        open(destination, "wb") as f,
-        tqdm(
-            desc=destination.name,
-            total=total_size,
-            unit="iB",
-            unit_scale=True,
-            unit_divisor=1024,
-        ) as pbar,
-    ):
+    with open(destination, "wb") as f, tqdm(
+        desc=destination.name,
+        total=total_size,
+        unit="iB",
+        unit_scale=True,
+        unit_divisor=1024,
+    ) as pbar:
         for data in response.iter_content(chunk_size=chunk_size):
             size = f.write(data)
             pbar.update(size)
 
 
+def _member_path(root: Path, name: str) -> Path:
+    """Reject paths that can escape or follow existing links under root."""
+    path = PurePosixPath(name)
+    if (
+        not name
+        or "\x00" in name
+        or "\\" in name
+        or ":" in name
+        or path.is_absolute()
+        or ".." in path.parts
+        or any(
+            part.endswith((".", " ")) or PureWindowsPath(part).is_reserved()
+            for part in path.parts
+        )
+    ):
+        raise ValueError(f"Unsafe archive path: {name!r}")
+    target = root
+    for part in path.parts:
+        target = target / part
+        if target.is_symlink():
+            raise ValueError(f"Archive path follows an existing symlink: {name!r}")
+    return target
+
+
+def _copy_member(source, target: Path) -> None:
+    """Replace a file without writing through an existing hard link."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=str(target.parent), delete=False) as output:
+            temporary = Path(output.name)
+            shutil.copyfileobj(source, output)
+        os.replace(str(temporary), str(target))
+    finally:
+        if temporary is not None and temporary.exists():
+            temporary.unlink()
+
+
 def extract_archive(archive_path: Path, extract_path: Path) -> None:
-    """
-    Extract zip or tar.gz/tgz archive
+    """Extract regular files and directories; reject links and special files.
+
+    Archive ownership and permission metadata are not applied. The destination
+    must not be modified by another process during extraction.
     """
     logger.info(f"Extracting {archive_path} to {extract_path}")
-
-    # Create extraction directory if it doesn't exist
+    if extract_path.is_symlink():
+        raise ValueError("Extraction directory must not be a symlink")
     extract_path.mkdir(parents=True, exist_ok=True)
+    root = extract_path.resolve()
 
     if archive_path.suffix == ".zip":
         with zipfile.ZipFile(archive_path, "r") as zip_ref:
-            zip_ref.extractall(extract_path)
+            members = []
+            for member in zip_ref.infolist():
+                kind = stat.S_IFMT(member.external_attr >> 16)
+                if kind not in (0, stat.S_IFREG, stat.S_IFDIR):
+                    raise ValueError(f"Unsupported ZIP member type: {member.filename!r}")
+                target = _member_path(root, member.filename)
+                is_directory = member.is_dir() or kind == stat.S_IFDIR
+                if target == root and not is_directory:
+                    raise ValueError("Archive file must not replace the extraction directory")
+                members.append((member, target, is_directory))
+            for member, target, is_directory in members:
+                if is_directory:
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    with zip_ref.open(member) as source:
+                        _copy_member(source, target)
     elif archive_path.suffix in [".gz", ".tgz"] or archive_path.name.endswith(
         ".tar.gz"
     ):
         with tarfile.open(archive_path, "r:gz") as tar_ref:
-
-            def is_within_directory(directory, target):
-                abs_directory = os.path.abspath(directory)
-                abs_target = os.path.abspath(target)
-                prefix = os.path.commonprefix([abs_directory, abs_target])
-                return prefix == abs_directory
-
-            def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
-                for member in tar.getmembers():
-                    member_path = os.path.join(path, member.name)
-                    if not is_within_directory(path, member_path):
-                        raise Exception("Attempted path traversal in tar file")
-
-                tar.extractall(path, members, numeric_owner=numeric_owner)
-
-            safe_extract(tar_ref, str(extract_path))
+            members = []
+            for member in tar_ref.getmembers():
+                if not member.isdir() and member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE):
+                    raise ValueError(f"Unsupported TAR member type: {member.name!r}")
+                target = _member_path(root, member.name)
+                if target == root and not member.isdir():
+                    raise ValueError("Archive file must not replace the extraction directory")
+                members.append((member, target))
+            for member, target in members:
+                if member.isdir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    with tar_ref.extractfile(member) as source:
+                        _copy_member(source, target)
     else:
         raise ValueError(f"Unsupported archive format: {archive_path.suffix}")
 

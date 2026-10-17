@@ -81,7 +81,7 @@ class TemporalCausalConv(nn.Module):
         self.norm = nn.BatchNorm1d(out_channels)
         self.activation = nn.GELU()
         # Zero out the right half of the kernel so each output at time t only
-        # depends on inputs at times <= t — this is what makes it "causal".
+        # depends on inputs at times <= t; this is what makes it "causal".
         self.register_buffer("mask", self._get_causal_mask(kernel_size))
 
     def _get_causal_mask(self, kernel_size: int) -> torch.Tensor:

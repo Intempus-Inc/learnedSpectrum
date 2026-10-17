@@ -49,16 +49,16 @@ class Config:
         self.AMP_DTYPE = torch.float16
 
         # Training settings
-        self.BATCH_SIZE = 8  # Increased from 4
-        self.NUM_WORKERS = 4  # Increased from 2
+        self.BATCH_SIZE = 8
+        self.NUM_WORKERS = 4
         self.PIN_MEMORY = True
         self.PERSISTENT_WORKERS = True
-        self.PREFETCH_FACTOR = 4  # Increased from 2
+        self.PREFETCH_FACTOR = 4
         self.DROP_LAST = True  # Add this to prevent small last batches
 
         # Model architecture
         self.PATCH_SIZE = PATCH_SIZE
-        self.EMBED_DIM = 192  # Reduced to match temporal states
+        self.EMBED_DIM = 192
         self.DEPTH = 6
         self.NUM_HEADS = NUM_HEADS
         self.MLP_RATIO = 4.0
